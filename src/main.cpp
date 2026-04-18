@@ -1,155 +1,221 @@
-// Artur Foden
-// Milestone 2 for Space Electronics II project
-// TU Berlin
-// Code complete: 30.03.2026
-
-#include <Mode0.h>
-#include <Mode3.h>
-#include <Telemetry.h>
+#include <Arduino.h>
 
 /**
- * @brief Collects current device state and sensor data and publishes telemetry.
- *
- * This function fills a TelemetryPayload with the current operating mode,
- * default mode, plot selection, power measurements, IMU data, environmental
- * data, Wi-Fi signal strength, uptime, ADC and DAC values, waveform settings,
- * and supported commands, then publishes the payload.
+ * @brief Pin connected to the boot button LED.
  */
-void sendTelemetry() {
-  /**
-   * @brief Telemetry payload containing the current device status and
-   * measurements.
-   */
-  TelemetryPayload payload;
-
-  payload.currentMode = String(currentMode);
-  payload.defaultMode = String(defaultMode);
-  payload.currentPlot = getCurrentPlotType();
-  payload.defaultPlot = getDefaultPlotType();
-  payload.batteryVoltage = formatValueToDecimalPlaces(getBatteryVoltage(), 2);
-  payload.usbVoltage = formatValueToDecimalPlaces(getUSBVoltage(), 2);
-  payload.angularRateX = formatValueToDecimalPlaces(getGyroscopeData().x, 1);
-  payload.angularRateY = formatValueToDecimalPlaces(getGyroscopeData().y, 1);
-  payload.angularRateZ = formatValueToDecimalPlaces(getGyroscopeData().z, 1);
-  payload.accelerationX =
-      formatValueToDecimalPlaces(getAccelerationData().x, 1);
-  payload.accelerationY =
-      formatValueToDecimalPlaces(getAccelerationData().y, 1);
-  payload.accelerationZ =
-      formatValueToDecimalPlaces(getAccelerationData().z, 1);
-  payload.temperature =
-      formatValueToDecimalPlaces(getEnvironmentalData().tempratureC, 2);
-  payload.humidity =
-      formatValueToDecimalPlaces(getEnvironmentalData().humidityPercent, 2);
-  payload.pressure =
-      formatValueToDecimalPlaces(getEnvironmentalData().pressureHpa, 2);
-  payload.wifiRSSI = formatValueToDecimalPlaces(getWifiSignalStrength(), 1);
-  payload.uptimeMs =
-      formatValueToDecimalPlaces(systemClock.getCurrentTimeMilliseconds(), 0);
-  payload.adcMeasurement = formatValueToDecimalPlaces(getADCInputVoltage(), 1);
-  payload.dacOutput = formatValueToDecimalPlaces(getDACOutputVoltage(), 2);
-  payload.amplitude = formatValueToDecimalPlaces(wave.amplitude, 1);
-  payload.frequency = formatValueToDecimalPlaces(wave.frequency, 1);
-  payload.waveform = getWaveform();
-  payload.availableCommands = getAvailableCommands();
-
-  updateTelemetryPublication(payload);
-}
+constexpr int LED_BOOT_BUTTON_PIN = 0;
 
 /**
- * @brief Reads the default mode from persistent storage and applies it.
- *
- * The function reads the stored mode value from DEFAULT_MODE_PATH, trims any
- * surrounding whitespace, converts supported values to the corresponding mode,
- * falls back to mode 0 if the value is invalid, and initializes the selected
- * mode.
- *
- * @note Persistent storage is an SD card.
+ * @brief PWM channel used for the buzzer.
  */
-void parseDefaultModeFromStorage() {
-  /**
-   * @brief Mode string read from persistent storage.
-   */
-  String modeString = readFile(DEFAULT_MODE_PATH);
-  modeString.trim();
-
-  if (modeString == "1") {
-    defaultMode = 1;
-  } else if (modeString == "2") {
-    defaultMode = 2;
-  } else if (modeString == "3") {
-    defaultMode = 3;
-  } else {
-    defaultMode = 0;
-  }
-
-  initialiseMode(defaultMode);
-}
+constexpr int BUZZER_CHANNEL = 0;
 
 /**
- * @brief Reads the default plot type from persistent storage and applies it.
- *
- * The function reads the stored plot type from DEFAULT_PLOT_PATH, trims any
- * surrounding whitespace, sets it as the default plot type, and also applies
- * it as the current plot type.
- *
- * @note Persistent storage is an SD cardd.
+ * @brief Output pin connected to the buzzer.
  */
-void parseDefaultPlotFromStorage() {
-  /**
-   * @brief Plot type string read from persistent storage.
-   */
-  String plotString = readFile(DEFAULT_PLOT_PATH);
-  plotString.trim();
-
-  setDefaultPlotType(plotString);
-  setPlotType(plotString);
-}
+constexpr int BUZZER_PIN = 14;
 
 /**
- * @brief Updates all necessary sensors at a consistent frequency.
+ * @brief PWM duty cycle used to drive the buzzer.
  */
-void updateSensors() {
-  if (mayUpdateSensor()) {
-    updateAccelerationHistory();
-    updatePressureSensor();
-    updateADCSensor();
+constexpr int BUZZER_DUTY = 2048;
+
+/**
+ * @brief Duration of a dot in milliseconds.
+ */
+constexpr unsigned int DOT_DURATION_MS = 200;
+
+/**
+ * @brief Duration of a dash in milliseconds.
+ */
+constexpr unsigned int DASH_DURATION_MS = 600;
+
+/**
+ * @brief Pause between Morse symbols in milliseconds.
+ */
+constexpr unsigned int SYMBOL_PAUSE_MS = 600;
+
+/**
+ * @brief Pause between words in milliseconds.
+ */
+constexpr unsigned int WORD_PAUSE_MS = 2000;
+
+/**
+ * @brief Pause before repeating the message.
+ */
+constexpr unsigned int REPEAT_PAUSE_MS = 5000;
+
+/**
+ * @brief Returns the Morse code representation of a letter.
+ *
+ * @param character Uppercase ASCII letter.
+ * @return Morse code string for the letter, or nullptr if unsupported.
+ */
+const char *getMorseForCharacter(char character) {
+  switch (character) {
+    case 'A': return ".-";
+    case 'B': return "-...";
+    case 'C': return "-.-.";
+    case 'D': return "-..";
+    case 'E': return ".";
+    case 'F': return "..-.";
+    case 'G': return "--.";
+    case 'H': return "....";
+    case 'I': return "..";
+    case 'J': return ".---";
+    case 'K': return "-.-";
+    case 'L': return ".-..";
+    case 'M': return "--";
+    case 'N': return "-.";
+    case 'O': return "---";
+    case 'P': return ".--.";
+    case 'Q': return "--.-";
+    case 'R': return ".-.";
+    case 'S': return "...";
+    case 'T': return "-";
+    case 'U': return "..-";
+    case 'V': return "...-";
+    case 'W': return ".--";
+    case 'X': return "-..-";
+    case 'Y': return "-.--";
+    case 'Z': return "--..";
+    default:  return nullptr;
   }
 }
 
+void flashLight(unsigned int durationMs) {
+  digitalWrite(LED_BOOT_BUTTON_PIN, LOW);
+  delay(durationMs);
+  digitalWrite(LED_BOOT_BUTTON_PIN, HIGH);
+}
+
 /**
- * @brief Performs device setup during boot.
+ * @brief Turns the LED and buzzer on for a specified duration, then off.
  *
- * This function boots the device infrastructure and then reads the default mode
- * and plot settings from persistent storage.
+ * @param durationMs How long to signal.
  */
+void signalMorseElement(unsigned int durationMs) {
+  digitalWrite(LED_BOOT_BUTTON_PIN, LOW);
+  ledcWrite(BUZZER_CHANNEL, BUZZER_DUTY);
+
+  delay(durationMs);
+
+  ledcWrite(BUZZER_CHANNEL, 0);
+  digitalWrite(LED_BOOT_BUTTON_PIN, HIGH);
+}
+
+/**
+ * @brief Outputs a Morse code sequence using the LED and buzzer.
+ *
+ * @param morse Null-terminated Morse code sequence containing '.' and '-'.
+ */
+void outputMorseSequence(const char *morse) {
+  while (*morse != '\0') {
+    Serial.print(*morse);
+
+    if (*morse == '.') {
+      signalMorseElement(DOT_DURATION_MS);
+    } else if (*morse == '-') {
+      signalMorseElement(DASH_DURATION_MS);
+    }
+
+    delay(SYMBOL_PAUSE_MS);
+    ++morse;
+  }
+}
+
+/**
+ * @brief Converts a text message to Morse output using the LED and buzzer.
+ *
+ * Letters are converted to Morse. Spaces and common punctuation are treated
+ * as word separators.
+ *
+ * @param text Input text message.
+ */
+void playMorseMessage(const String &text) {
+  for (unsigned int i = 0; i < text.length(); ++i) {
+    char character = toupper(text.charAt(i));
+
+    if (const char *morse = getMorseForCharacter(character)) {
+      outputMorseSequence(morse);
+      Serial.print(" ");
+      delay(SYMBOL_PAUSE_MS);
+    } else if (character == ' ' || character == '.' || character == ',' ||
+               character == '!' || character == '?') {
+      Serial.print("/ ");
+
+      delay(WORD_PAUSE_MS);
+    }
+  }
+}
+
+void playDefaultFlash() {
+  flashLight(1000);
+  delay(1000);
+  flashLight(1000);
+  delay(1000);
+  flashLight(1500);
+}
+
 void setup() {
-  bootDevice("Device booting", mqttCallback);
+  Serial.begin(115200);
+  delay(200);
 
-  // Read from SD card default modes and plots.
-  parseDefaultModeFromStorage();
-  parseDefaultPlotFromStorage();
+  pinMode(LED_BOOT_BUTTON_PIN, OUTPUT);
+  digitalWrite(LED_BOOT_BUTTON_PIN, HIGH);
 
-  while (!deviceHasBootedSuccessfully) {
-    // Hold in loop until all online.
-    continue;
-  }
+  ledcSetup(BUZZER_CHANNEL, 25, 12);
+  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+  ledcWrite(BUZZER_CHANNEL, 0);
 }
 
-/**
- * @brief Main execution loop for runtime device behaviour.
- */
 void loop() {
-  if (!mqttConnectedToBroker().isLoaded) {
-    bootDevice("Device rebooting", mqttCallback);
-    return;
+  playDefaultFlash();
+  int randomValue = random(0, 1000);
+  if(randomValue == 50) {
+    playMorseMessage("HELLO CASPIAN.");
   }
-  checkForMessages();
-  handleTouchInputs(incrementWaveformControl, incrementCurrentWaveformControl,
-                    decrementCurrentWaveformControl, incrementPlotControl,
-                    incrementCurrentPlotControl, decrementCurrentPlotControl);
-  updateSensors();
-  manageModes(mode0, mode1, mode2, mode3);
-  outputSignal(dacPlot, wave);
-  sendTelemetry();
+  else if(randomValue == 51) {
+    playMorseMessage("Your parents love you Caspian.");
+  }
+  else if(randomValue == 52) {
+    playMorseMessage("You were born April second twenty twenty six.");
+  }
+  else if(randomValue == 53) {
+    playMorseMessage("Always stay strong.");
+  }
+  else if(randomValue == 54) {
+    playMorseMessage("We are very proud of you.");
+  }
+  else if(randomValue == 55) {
+    playMorseMessage("Follow your dreams.");
+  }
+  else if(randomValue == 56) {
+    playMorseMessage("We called you Mr Burpy.");
+  }
+  else if(randomValue == 57) {
+    playMorseMessage("You are part Russian, English, Irish, and Lebanese.");
+  }
+  else if(randomValue == 58) {
+    playMorseMessage("There are fourteen hidden messages.");
+  }
+  else if(randomValue == 59) {
+    playMorseMessage("You were born in the Coombe Hospital in Dublin.");
+  }
+  else if(randomValue == 60) {
+    playMorseMessage("You better not throw this lighthouse away.");
+  }
+  else if(randomValue == 61) {
+    playMorseMessage("You are named after the Caspian Sea.");
+  }
+  else if(randomValue == 62) {
+    playMorseMessage("There is a light inside you.");
+  }
+  else if(randomValue == 63) {
+    playMorseMessage("You brighten our lives.");
+  }
+
+  // Delay before repeating the message to avoid spamming the LED and buzzer too quickly.
+  delay(REPEAT_PAUSE_MS);
+  Serial.println();
 }
