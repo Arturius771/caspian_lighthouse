@@ -167,13 +167,15 @@ void setup() {
   ledcSetup(BUZZER_CHANNEL, 25, 12);
   ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
   ledcWrite(BUZZER_CHANNEL, 0);
+
+  randomSeed(micros());
 }
 
 void loop() {
   playDefaultFlash();
-  int randomValue = random(0, 1000);
+  int randomValue = random(0, 500);
   if(randomValue == 50) {
-    playMorseMessage("HELLO CASPIAN.");
+    playMorseMessage("Hello Caspian.");
   }
   else if(randomValue == 51) {
     playMorseMessage("Your parents love you Caspian.");
